@@ -1,0 +1,11 @@
+services:
+  fyp-scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      MONGODB_URI: ${MONGODB_URI:-}
+      MONGODB_USERNAME: ${MONGODB_USERNAME:-}
+      MONGODB_PASSWORD: ${MONGODB_PASSWORD:-}
+    command: ["tail", "-f", "/dev/null"]
