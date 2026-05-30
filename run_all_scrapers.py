@@ -9,13 +9,15 @@ EC2 / Linux:
   # or: export MONGODB_URI=...
   python3 run_all_scrapers.py
 
-Windows:
+Windows (from repo root):
+  python run_all_scrapers.py
+
+From FYP_Scraper folder:
   python run_all_scrapers.py
 """
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -25,13 +27,19 @@ try:
 except ImportError:
     load_dotenv = None
 
-ROOT = Path(__file__).resolve().parent
-SCRAPY_DIR = ROOT / "FYP_Scraper"
+_SCRIPT_DIR = Path(__file__).resolve().parent
+# Support running from repo root OR from FYP_Scraper/
+if (_SCRIPT_DIR / "scrapy.cfg").is_file():
+    SCRAPY_DIR = _SCRIPT_DIR
+    ROOT = _SCRIPT_DIR.parent
+else:
+    ROOT = _SCRIPT_DIR
+    SCRAPY_DIR = ROOT / "FYP_Scraper"
 
 # Same spiders as cron-jobs.yaml (name, extra scrapy args)
 SPIDERS: list[tuple[str, list[str]]] = [
-    ("city42", []),
-    ("daily_Pakistan", []),
+    # ("city42", []),
+    # ("daily_Pakistan", []),
     ("urdupoint_multi_category", ["-a", "selected_category=murder"]),
     ("urdupoint_multi_category", ["-a", "selected_category=thief"]),
     ("urdupoint_multi_category", ["-a", "selected_category=robbery"]),
@@ -39,8 +47,9 @@ SPIDERS: list[tuple[str, list[str]]] = [
     ("urdupoint_multi_category", ["-a", "selected_category=kidnapping"]),
     ("urdupoint_multi_category", ["-a", "selected_category=rape"]),
     ("urdupoint_multi_category", ["-a", "selected_category=suicide"]),
-    ("nawaiwaqt", []),
-    ("24_news", []),
+    ("urdupoint_search", ["-a", "query=زیادتی"]),
+    # ("nawaiwaqt", []),
+    # ("24_news", []),
     ("dunya_news", []),
 ]
 

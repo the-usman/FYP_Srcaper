@@ -44,6 +44,7 @@ jobs:
           scrapy crawl urdupoint_multi_category -a selected_category=kidnapping || echo "urdupoint kidnapping failed"
           scrapy crawl urdupoint_multi_category -a selected_category=rape || echo "urdupoint rape failed"
           scrapy crawl urdupoint_multi_category -a selected_category=suicide || echo "urdupoint suicide failed"
+          scrapy crawl urdupoint_search -a query=زیادتی || echo "urdupoint search failed"
           scrapy crawl nawaiwaqt || echo "nawaiwaqt failed"
           scrapy crawl 24_news || echo "24_news failed"
           scrapy crawl dunya_news || echo "dunya_news failed"

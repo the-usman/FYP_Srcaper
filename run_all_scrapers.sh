@@ -28,6 +28,7 @@ run urdupoint_multi_category -a selected_category=terrorism
 run urdupoint_multi_category -a selected_category=kidnapping
 run urdupoint_multi_category -a selected_category=rape
 run urdupoint_multi_category -a selected_category=suicide
+run urdupoint_search -a query=زیادتی
 run nawaiwaqt
 run 24_news
 run dunya_news
