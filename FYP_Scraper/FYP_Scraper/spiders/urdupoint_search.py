@@ -59,10 +59,12 @@ class UrduPointSearchSpider(scrapy.Spider):
         },
     }
 
-    def __init__(self, query: str = "زیادتی", max_pages: str = "5", *args, **kwargs):
+    def __init__(self, query: str = "زیادتی", max_pages: str = "all", *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.query = query
-        self.max_pages = int(max_pages)
+        mp = str(max_pages).strip().lower()
+        # 0 / all / empty = every Google CSE page until no more results
+        self.max_pages = 0 if mp in ("all", "0", "") else int(max_pages)
         self.seen_urls: set[str] = set()
 
     def start_requests(self):
@@ -112,9 +114,9 @@ class UrduPointSearchSpider(scrapy.Spider):
                 dont_filter=True,
             )
 
+        pages_label = "all" if self.max_pages == 0 else str(self.max_pages)
         self.logger.info(
-            f"Collected {len(links)} links from {self.max_pages} CSE page(s), "
-            f"queued {count} articles"
+            f"Collected {len(links)} links (CSE pages={pages_label}), queued {count} articles"
         )
 
     def _is_article_url(self, url: str) -> bool:

@@ -38,20 +38,47 @@ async (url) => {
 COLLECT_CSE_LINKS_JS = """
 async (maxPages) => {
   const urls = new Set();
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const scrapeAll = !maxPages || maxPages <= 0;
+
   const add = () => {
-    document.querySelectorAll('a.gs-title').forEach(a => {
-      if (a.href && a.href.includes('urdupoint.com') && a.href.endsWith('.html'))
-        urls.add(a.href);
+    document.querySelectorAll('a.gs-title').forEach((a) => {
+      const h = a.href || '';
+      if (h.includes('urdupoint.com') && h.endsWith('.html') && !h.includes('search.php'))
+        urls.add(h);
     });
   };
+
   add();
-  const pages = document.querySelectorAll('a.gsc-cursor-page');
-  const total = Math.min(maxPages, pages.length || 1);
-  for (let i = 1; i < total; i++) {
-    pages[i].click();
-    await new Promise(r => setTimeout(r, 1200));
+
+  const maxRounds = scrapeAll ? 150 : maxPages;
+  let prevSize = 0;
+  let staleRounds = 0;
+
+  for (let round = 0; round < maxRounds; round++) {
+    const pages = [...document.querySelectorAll('a.gsc-cursor-page')];
+    const current = document.querySelector('.gsc-cursor-current-page');
+    const curIdx = pages.indexOf(current);
+    let next = curIdx >= 0 && curIdx + 1 < pages.length ? pages[curIdx + 1] : null;
+
+    if (!next) {
+      next = pages.find((p) => !p.classList.contains('gsc-cursor-current-page'));
+    }
+    if (!next || next === current) break;
+
+    next.click();
+    await sleep(1400);
     add();
+
+    if (urls.size === prevSize) {
+      staleRounds += 1;
+      if (staleRounds >= 2) break;
+    } else {
+      staleRounds = 0;
+      prevSize = urls.size;
+    }
   }
+
   return [...urls];
 }
 """

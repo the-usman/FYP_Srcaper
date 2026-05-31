@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run UrduPoint search spider on EC2 (headless Playwright).
+# Run UrduPoint search spider — all Google CSE pages + every article (EC2).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -19,11 +19,19 @@ fi
 
 export PLAYWRIGHT_HEADLESS=true
 
+# Search keyword (Urdu)
 QUERY="${QUERY:-زیادتی}"
-MAX_PAGES="${MAX_PAGES:-5}"
+
+# Google CSE pagination: "all" = every result page (default)
+# Or set a number, e.g. MAX_PAGES=10
+MAX_PAGES="${MAX_PAGES:-all}"
 
 cd FYP_Scraper
-echo "Starting urdupoint_search query=$QUERY max_pages=$MAX_PAGES at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "Starting urdupoint_search"
+echo "  query=$QUERY"
+echo "  max_pages=$MAX_PAGES (all = scrape every search result page)"
+echo "  started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
 scrapy crawl urdupoint_search \
   -a "query=${QUERY}" \
   -a "max_pages=${MAX_PAGES}" \
