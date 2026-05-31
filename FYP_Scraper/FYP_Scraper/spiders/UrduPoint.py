@@ -1,6 +1,7 @@
 import scrapy
 from scrapy.http import FormRequest, Request
 from datetime import datetime
+from FYP_Scraper.content_utils import extract_urdupoint_body
 from FYP_Scraper.items import NewsArticleItem
 import re
 from scrapy.exceptions import CloseSpider
@@ -124,9 +125,7 @@ class UrduPointMultiCategorySpider(scrapy.Spider):
         keywords = response.meta["keywords"]
 
         title = response.css("h1.urdu::text").get(default="N/A").strip()
-        raw_content = response.css("div.detail_txt.urdu *::text").getall()
-        content = " ".join(t.strip() for t in raw_content if t.strip())
-        content = re.sub(r'googletag\.cmd\.push\([^)]*\);', '', content)
+        content = extract_urdupoint_body(response)
 
         if not any(k in title or k in content for k in keywords):
             return

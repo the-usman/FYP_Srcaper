@@ -14,6 +14,7 @@ from urllib.parse import quote, urlparse
 import scrapy
 from scrapy.http import Request
 
+from FYP_Scraper.content_utils import extract_urdupoint_body
 from FYP_Scraper.items import NewsArticleItem
 
 MONTH_MAP = {
@@ -151,11 +152,7 @@ class UrduPointSearchSpider(scrapy.Spider):
 
         url = response.meta["url"]
         title = (response.css("h1.urdu::text").get() or "N/A").strip()
-        raw_content = response.css("div.detail_txt.urdu *::text").getall()
-        if not raw_content:
-            raw_content = response.css("div.detail_txt *::text, article *::text").getall()
-        content = " ".join(t.strip() for t in raw_content if t.strip())
-        content = re.sub(r"googletag\.cmd\.push\([^)]*\);", "", content)
+        content = extract_urdupoint_body(response)
 
         if not content or len(content) < 50:
             self.logger.warning(f"Short/empty content: {url}")
