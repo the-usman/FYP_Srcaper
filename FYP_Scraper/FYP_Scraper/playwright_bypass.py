@@ -35,51 +35,15 @@ async (url) => {
 }
 """
 
-COLLECT_CSE_LINKS_JS = """
-async (maxPages) => {
-  const urls = new Set();
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const scrapeAll = !maxPages || maxPages <= 0;
-
-  const add = () => {
-    document.querySelectorAll('a.gs-title').forEach((a) => {
-      const h = a.href || '';
-      if (h.includes('urdupoint.com') && h.endsWith('.html') && !h.includes('search.php'))
-        urls.add(h);
-    });
-  };
-
-  add();
-
-  const maxRounds = scrapeAll ? 150 : maxPages;
-  let prevSize = 0;
-  let staleRounds = 0;
-
-  for (let round = 0; round < maxRounds; round++) {
-    const pages = [...document.querySelectorAll('a.gsc-cursor-page')];
-    const current = document.querySelector('.gsc-cursor-current-page');
-    const curIdx = pages.indexOf(current);
-    let next = curIdx >= 0 && curIdx + 1 < pages.length ? pages[curIdx + 1] : null;
-
-    if (!next) {
-      next = pages.find((p) => !p.classList.contains('gsc-cursor-current-page'));
-    }
-    if (!next || next === current) break;
-
-    next.click();
-    await sleep(1400);
-    add();
-
-    if (urls.size === prevSize) {
-      staleRounds += 1;
-      if (staleRounds >= 2) break;
-    } else {
-      staleRounds = 0;
-      prevSize = urls.size;
-    }
-  }
-
-  return [...urls];
+GRAB_CSE_LINKS_JS = """
+() => {
+  const out = [];
+  document.querySelectorAll('a.gs-title').forEach((a) => {
+    const h = a.href || '';
+    if (h.includes('urdupoint.com') && h.endsWith('.html') && !h.includes('search.php'))
+      out.push(h);
+  });
+  return out;
 }
 """
 
@@ -259,6 +223,38 @@ class _PlaywrightAsyncWorker:
         )
         await page.wait_for_timeout(800)
 
+    async def _find_cse_context(self, page):
+        """Frame or Page that hosts Google CSE result links."""
+        if await page.locator("a.gs-title").count() > 0:
+            return page
+        for frame in page.frames:
+            if frame is page.main_frame:
+                continue
+            try:
+                if await frame.locator("a.gs-title").count() > 0:
+                    return frame
+            except Exception:
+                continue
+        return page
+
+    async def _grab_cse_links(self, ctx, seen: set[str]) -> int:
+        hrefs = await ctx.evaluate(GRAB_CSE_LINKS_JS)
+        added = 0
+        for h in hrefs:
+            if h not in seen:
+                seen.add(h)
+                added += 1
+        return added
+
+    async def _cse_current_index(self, ctx) -> int:
+        pages = ctx.locator(".gsc-cursor-page")
+        n = await pages.count()
+        for i in range(n):
+            cls = await pages.nth(i).get_attribute("class") or ""
+            if "gsc-cursor-current-page" in cls:
+                return i
+        return -1
+
     async def _collect_search_links(self, page, request: Request, max_pages: int) -> HtmlResponse:
         url = request.url
         await page.goto(url, wait_until="domcontentloaded", timeout=60000)
@@ -268,7 +264,76 @@ class _PlaywrightAsyncWorker:
             await page.wait_for_selector("a.gs-title, .gsc-result", timeout=20000)
         except Exception:
             logger.warning("Google CSE slow load; collecting anyway")
-        links = await page.evaluate(COLLECT_CSE_LINKS_JS, max_pages)
+
+        ctx = await self._find_cse_context(page)
+        scrape_all = not max_pages or max_pages <= 0
+        max_rounds = 150 if scrape_all else max(1, max_pages)
+        seen: set[str] = set()
+        await self._grab_cse_links(ctx, seen)
+
+        for round_idx in range(max_rounds - 1):
+            pages = ctx.locator(".gsc-cursor-page")
+            n = await pages.count()
+            if n < 2:
+                break
+
+            cur_idx = await self._cse_current_index(ctx)
+            next_idx = (cur_idx + 1) if cur_idx >= 0 else 1
+            if next_idx >= n:
+                break
+
+            next_page = pages.nth(next_idx)
+            label = (await next_page.inner_text() or "").strip()
+            if label in ("...", "…"):
+                if next_idx + 1 < n:
+                    next_page = pages.nth(next_idx + 1)
+                else:
+                    break
+
+            before = len(seen)
+            current_label = ""
+            if cur_idx >= 0:
+                try:
+                    current_label = (await pages.nth(cur_idx).inner_text() or "").strip()
+                except Exception:
+                    pass
+
+            try:
+                await next_page.scroll_into_view_if_needed()
+                await next_page.click(timeout=10000)
+            except Exception as exc:
+                logger.warning("CSE pagination click failed on page %d: %s", next_idx + 1, exc)
+                break
+
+            try:
+                await ctx.wait_for_function(
+                    """(prev) => {
+                      const cur = document.querySelector('.gsc-cursor-current-page');
+                      if (!cur) return false;
+                      const t = (cur.innerText || cur.textContent || '').trim();
+                      return t !== prev;
+                    }""",
+                    arg=current_label,
+                    timeout=12000,
+                )
+            except Exception:
+                await page.wait_for_timeout(2500)
+            else:
+                await page.wait_for_timeout(600)
+
+            try:
+                await ctx.wait_for_selector("a.gs-title", timeout=10000)
+            except Exception:
+                pass
+
+            await self._grab_cse_links(ctx, seen)
+            if len(seen) == before:
+                logger.info("CSE page %d: no new links; stopping", next_idx + 1)
+                break
+
+        links = list(seen)
+        pages_label = "all" if scrape_all else str(max_pages)
+        logger.info("Collected %d CSE links (pagination rounds=%s)", len(links), pages_label)
         body = json.dumps({"links": links}, ensure_ascii=False).encode("utf-8")
         return HtmlResponse(url=url, status=200, body=body, encoding="utf-8", request=request)
 

@@ -157,6 +157,20 @@ class UrduPointSearchSpider(scrapy.Spider):
         content = extract_urdupoint_body(response)
 
         if not content or len(content) < 50:
+            if "livenews" in url and not response.meta.get("playwright_full_retry"):
+                self.logger.info(f"Retrying livenews with full page load: {url}")
+                yield Request(
+                    url=url,
+                    callback=self.parse_article,
+                    meta={
+                        **response.meta,
+                        "dont_proxy": True,
+                        "playwright_fast": False,
+                        "playwright_full_retry": True,
+                    },
+                    dont_filter=True,
+                )
+                return
             self.logger.warning(f"Short/empty content: {url}")
             return
 
