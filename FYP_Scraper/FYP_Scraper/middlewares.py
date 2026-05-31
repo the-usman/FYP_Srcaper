@@ -107,7 +107,17 @@ class FypScraperDownloaderMiddleware:
 class RandomProxyMiddleware:
     def __init__(self):
         try:
-            df = pd.read_csv('Free_Proxy_List.csv')
+            from pathlib import Path
+
+            csv_paths = [
+                Path("Free_Proxy_List.csv"),
+                Path(__file__).resolve().parent.parent.parent / "Free_Proxy_List.csv",
+                Path(__file__).resolve().parent.parent / "Free_Proxy_List.csv",
+            ]
+            csv_file = next((p for p in csv_paths if p.is_file()), None)
+            if not csv_file:
+                raise FileNotFoundError("Free_Proxy_List.csv not found")
+            df = pd.read_csv(csv_file)
             http_proxies = df[df['protocols'] == 'http']
             self.proxy_list = [f"http://{row['ip']}:{row['port']}" for _, row in http_proxies.iterrows()]
             if not self.proxy_list:
@@ -125,8 +135,10 @@ class RandomProxyMiddleware:
         pass
 
     def process_request(self, request, spider):
+        if request.meta.get("dont_proxy") or request.meta.get("playwright"):
+            return
         if self.proxy_list:
-            request.meta['proxy'] = random.choice(self.proxy_list)
+            request.meta["proxy"] = random.choice(self.proxy_list)
 
 
 class RandomUserAgentMiddleware:

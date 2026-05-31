@@ -32,8 +32,8 @@ ROBOTSTXT_OBEY = False
 #CONCURRENT_REQUESTS_PER_DOMAIN = 16
 #CONCURRENT_REQUESTS_PER_IP = 16
 
-# Disable cookies (enabled by default)
-COOKIES_ENABLED = False
+# Cookies help session persistence on protected sites (enabled per spider too)
+COOKIES_ENABLED = True
 
 # Disable Telnet Console (enabled by default)
 #TELNETCONSOLE_ENABLED = False
@@ -56,9 +56,16 @@ DOWNLOADER_MIDDLEWARES = {
     'scrapy.downloadermiddlewares.useragent.UserAgentMiddleware': None,
     'scrapy.downloadermiddlewares.retry.RetryMiddleware': 500,
     'scrapy.downloadermiddlewares.httpproxy.HttpProxyMiddleware': None,
+    'FYP_Scraper.playwright_bypass.PlaywrightBypassMiddleware': 580,
     'FYP_Scraper.middlewares.RandomProxyMiddleware': 750,
     'FYP_Scraper.middlewares.RandomUserAgentMiddleware': 400,
 }
+
+# Playwright Cloudflare bypass (ScrapeGraphAI-style JS rendering)
+PLAYWRIGHT_BYPASS_ENABLED = False
+PLAYWRIGHT_BYPASS_DOMAINS = ['urdupoint.com', 'www.urdupoint.com']
+PLAYWRIGHT_HEADLESS = True
+PLAYWRIGHT_WAIT_MS = 3000
 
 
 # Retry settings
