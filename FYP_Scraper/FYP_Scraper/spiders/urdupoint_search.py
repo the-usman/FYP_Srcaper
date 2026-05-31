@@ -7,30 +7,13 @@ One Playwright pass collects all CSE pages; articles use fast in-page fetch.
 from __future__ import annotations
 
 import json
-import re
-from datetime import datetime
 from urllib.parse import quote, urlparse
 
 import scrapy
 from scrapy.http import Request
 
-from FYP_Scraper.content_utils import extract_urdupoint_body
+from FYP_Scraper.content_utils import extract_urdupoint_body, parse_urdupoint_date
 from FYP_Scraper.items import NewsArticleItem
-
-MONTH_MAP = {
-    "جنوری": "Jan",
-    "فروری": "Feb",
-    "مارچ": "Mar",
-    "اپریل": "Apr",
-    "مئی": "May",
-    "جون": "Jun",
-    "جولائی": "Jul",
-    "اگست": "Aug",
-    "ستمبر": "Sep",
-    "اکتوبر": "Oct",
-    "نومبر": "Nov",
-    "دسمبر": "Dec",
-}
 
 
 class UrduPointSearchSpider(scrapy.Spider):
@@ -68,7 +51,8 @@ class UrduPointSearchSpider(scrapy.Spider):
         self.seen_urls: set[str] = set()
 
     def start_requests(self):
-        search_url = f"{self.search_base}?q={quote(self.query)}"
+        # num=10 is default CSE page size; keeps pagination predictable (10 pages × 10 = 100 max)
+        search_url = f"{self.search_base}?q={quote(self.query)}&num=10"
         yield Request(
             url=search_url,
             callback=self.parse_search_collected,
@@ -127,26 +111,6 @@ class UrduPointSearchSpider(scrapy.Spider):
         path = urlparse(url).path
         return "/daily/" in path and path.endswith(".html")
 
-    def _parse_date_from_detail(self, response) -> tuple[str, str]:
-        date_parts = response.css("div.item_date *::text").getall()
-        if not date_parts:
-            date_parts = response.css("span.date *::text, time::text").getall()
-        date_str = " ".join(t.strip() for t in date_parts if t.strip())
-        match = re.search(r"(\d{1,2}) (\w+) (\d{4})", date_str)
-        if match:
-            day, month_urdu, year = match.groups()
-            month = MONTH_MAP.get(month_urdu, "Unknown")
-            date_final = f"{day} {month} {year}"
-            try:
-                if datetime.strptime(date_final, "%d %b %Y") >= datetime(2015, 1, 1):
-                    reported = next((t.strip() for t in date_parts if ":" in t.strip()), "N/A")
-                    return date_final, reported
-            except ValueError:
-                pass
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str.strip()):
-            return date_str.strip(), "N/A"
-        return "N/A", "N/A"
-
     def parse_article(self, response):
         if response.status in (403, 503) or "Just a moment" in response.text:
             self.logger.warning(f"Blocked article: {response.meta['url']}")
@@ -174,10 +138,7 @@ class UrduPointSearchSpider(scrapy.Spider):
             self.logger.warning(f"Short/empty content: {url}")
             return
 
-        date, reported_time = self._parse_date_from_detail(response)
-        if date == "N/A":
-            date = response.meta.get("date", "N/A")
-            reported_time = response.meta.get("reported_time", "N/A")
+        date, reported_time = parse_urdupoint_date(response, url=url)
 
         item = NewsArticleItem()
         item["url"] = url

@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sys
 import threading
 from concurrent.futures import Future
@@ -46,6 +47,39 @@ GRAB_CSE_LINKS_JS = """
   return out;
 }
 """
+
+CSE_CLICK_NEXT_JS = """
+() => {
+  const cur = document.querySelector('.gsc-cursor-current-page');
+  if (!cur) return { ok: false, reason: 'no-current' };
+
+  const isPage = (el) => el && el.classList && el.classList.contains('gsc-cursor-page');
+
+  let next = cur.nextElementSibling;
+  while (next && !isPage(next)) next = next.nextElementSibling;
+
+  if (!next) {
+    const pages = [...document.querySelectorAll('.gsc-cursor-page')];
+    const idx = pages.indexOf(cur);
+    if (idx >= 0 && idx + 1 < pages.length) next = pages[idx + 1];
+  }
+
+  if (!next) {
+    next = document.querySelector('.gsc-cursor-next-page, .gsc-cursor-next');
+  }
+
+  if (!next || next === cur) return { ok: false, reason: 'no-next' };
+
+  const label = (next.innerText || next.textContent || '').trim();
+  next.click();
+  return { ok: true, label };
+}
+"""
+
+_ARTICLE_URL_RE = re.compile(
+    r"https?://(?:www\.)?urdupoint\.com/daily/[^\s\"'<>]+\.html",
+    re.IGNORECASE,
+)
 
 BLOCK_RESOURCE_TYPES = {"image", "media", "font"}
 BLOCK_URL_PARTS = (
@@ -246,17 +280,59 @@ class _PlaywrightAsyncWorker:
                 added += 1
         return added
 
-    async def _cse_current_index(self, ctx) -> int:
-        pages = ctx.locator(".gsc-cursor-page")
-        n = await pages.count()
-        for i in range(n):
-            cls = await pages.nth(i).get_attribute("class") or ""
-            if "gsc-cursor-current-page" in cls:
-                return i
-        return -1
+    def _capture_urls_from_body(self, seen: set[str], body: str) -> int:
+        added = 0
+        for match in _ARTICLE_URL_RE.finditer(body):
+            url = match.group(0).split("&")[0].rstrip("\\")
+            if "search.php" in url:
+                continue
+            if url not in seen:
+                seen.add(url)
+                added += 1
+        return added
+
+    async def _cse_click_next(self, ctx) -> tuple[bool, str]:
+        result = await ctx.evaluate(CSE_CLICK_NEXT_JS)
+        return bool(result.get("ok")), str(result.get("label") or result.get("reason") or "")
+
+    async def _wait_cse_page_change(self, ctx, page, prev_label: str) -> None:
+        try:
+            await ctx.wait_for_function(
+                """(prev) => {
+                  const cur = document.querySelector('.gsc-cursor-current-page');
+                  if (!cur) return false;
+                  const t = (cur.innerText || cur.textContent || '').trim();
+                  return t !== prev;
+                }""",
+                arg=prev_label,
+                timeout=15000,
+            )
+        except Exception:
+            await page.wait_for_timeout(2800)
+        else:
+            await page.wait_for_timeout(700)
 
     async def _collect_search_links(self, page, request: Request, max_pages: int) -> HtmlResponse:
         url = request.url
+        seen: set[str] = set()
+
+        async def on_response(response):
+            try:
+                if response.status != 200:
+                    return
+                host = urlparse(response.url).hostname or ""
+                if not any(
+                    x in host
+                    for x in ("google", "urdupoint", "gstatic", "googleapis", "cse")
+                ):
+                    return
+                body = await response.text()
+                self._capture_urls_from_body(seen, body)
+            except Exception:
+                pass
+
+        page.on("response", on_response)
+
         await page.goto(url, wait_until="domcontentloaded", timeout=60000)
         await self._wait_cloudflare(page)
         await self._wake_lazy_scripts(page)
@@ -267,73 +343,56 @@ class _PlaywrightAsyncWorker:
 
         ctx = await self._find_cse_context(page)
         scrape_all = not max_pages or max_pages <= 0
-        max_rounds = 150 if scrape_all else max(1, max_pages)
-        seen: set[str] = set()
+        # Google CSE returns at most 100 results (10 pages × 10 links)
+        max_rounds = 12 if scrape_all else max(1, max_pages)
         await self._grab_cse_links(ctx, seen)
 
+        stale_streak = 0
         for round_idx in range(max_rounds - 1):
-            pages = ctx.locator(".gsc-cursor-page")
-            n = await pages.count()
-            if n < 2:
-                break
-
-            cur_idx = await self._cse_current_index(ctx)
-            next_idx = (cur_idx + 1) if cur_idx >= 0 else 1
-            if next_idx >= n:
-                break
-
-            next_page = pages.nth(next_idx)
-            label = (await next_page.inner_text() or "").strip()
-            if label in ("...", "…"):
-                if next_idx + 1 < n:
-                    next_page = pages.nth(next_idx + 1)
-                else:
-                    break
-
             before = len(seen)
-            current_label = ""
-            if cur_idx >= 0:
-                try:
-                    current_label = (await pages.nth(cur_idx).inner_text() or "").strip()
-                except Exception:
-                    pass
+            prev_label = await ctx.evaluate(
+                """() => {
+                  const cur = document.querySelector('.gsc-cursor-current-page');
+                  return cur ? (cur.innerText || cur.textContent || '').trim() : '';
+                }"""
+            )
 
-            try:
-                await next_page.scroll_into_view_if_needed()
-                await next_page.click(timeout=10000)
-            except Exception as exc:
-                logger.warning("CSE pagination click failed on page %d: %s", next_idx + 1, exc)
+            ok, label = await self._cse_click_next(ctx)
+            if not ok:
+                logger.info("CSE pagination ended: %s (round %d)", label, round_idx + 1)
                 break
 
+            await self._wait_cse_page_change(ctx, page, prev_label)
             try:
-                await ctx.wait_for_function(
-                    """(prev) => {
-                      const cur = document.querySelector('.gsc-cursor-current-page');
-                      if (!cur) return false;
-                      const t = (cur.innerText || cur.textContent || '').trim();
-                      return t !== prev;
-                    }""",
-                    arg=current_label,
-                    timeout=12000,
-                )
-            except Exception:
-                await page.wait_for_timeout(2500)
-            else:
-                await page.wait_for_timeout(600)
-
-            try:
-                await ctx.wait_for_selector("a.gs-title", timeout=10000)
+                await ctx.wait_for_selector("a.gs-title", timeout=12000)
             except Exception:
                 pass
 
             await self._grab_cse_links(ctx, seen)
-            if len(seen) == before:
-                logger.info("CSE page %d: no new links; stopping", next_idx + 1)
-                break
+            added = len(seen) - before
+            logger.debug("CSE round %d (%s): +%d links, total %d", round_idx + 2, label, added, len(seen))
+
+            if added == 0:
+                stale_streak += 1
+                if stale_streak >= 2:
+                    logger.info("CSE: no new links for %d rounds; stopping at %d", stale_streak, len(seen))
+                    break
+            else:
+                stale_streak = 0
 
         links = list(seen)
         pages_label = "all" if scrape_all else str(max_pages)
-        logger.info("Collected %d CSE links (pagination rounds=%s)", len(links), pages_label)
+        logger.info(
+            "Collected %d CSE links (max %d Google pages; mode=%s)",
+            len(links),
+            max_rounds,
+            pages_label,
+        )
+        if scrape_all and len(links) < 100:
+            logger.info(
+                "Google CSE caps at 100 results per query; got %d unique article URLs",
+                len(links),
+            )
         body = json.dumps({"links": links}, ensure_ascii=False).encode("utf-8")
         return HtmlResponse(url=url, status=200, body=body, encoding="utf-8", request=request)
 

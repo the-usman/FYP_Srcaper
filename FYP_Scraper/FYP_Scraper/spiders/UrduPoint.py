@@ -1,7 +1,7 @@
 import scrapy
 from scrapy.http import FormRequest, Request
 from datetime import datetime
-from FYP_Scraper.content_utils import extract_urdupoint_body
+from FYP_Scraper.content_utils import extract_urdupoint_body, parse_urdupoint_date
 from FYP_Scraper.items import NewsArticleItem
 import re
 from scrapy.exceptions import CloseSpider
@@ -121,6 +121,8 @@ class UrduPointMultiCategorySpider(scrapy.Spider):
         url = response.meta["url"]
         date = response.meta["date"]
         reported_time = response.meta["reported_time"]
+        if date == "N/A":
+            date, reported_time = parse_urdupoint_date(response, url=url)
         category = response.meta["category"]
         keywords = response.meta["keywords"]
 
